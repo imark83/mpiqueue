@@ -48,14 +48,19 @@ int main(int argc, char *argv[]) {
   MPI_Comm_rank(MPI_COMM_WORLD, &proc_id);
   MPI_Comm_size(MPI_COMM_WORLD, &world_size);
 
+  char processor_name[100];
+  int name_len;
+  MPI_Get_processor_name(processor_name, &name_len);
+
 
 
   std::cout << proc_id << "/" << world_size << std::endl;
 
   if (proc_id == 0) {
+    int taskSize = 5000;
     int activeWorkers = world_size-1;
-    Task pendingTask(10), completedTask(10);
-    for(size_t i=0; i<10; ++i) pendingTask.push_back((int) i);
+    Task pendingTask(taskSize), completedTask(taskSize);
+    for(size_t i=0; i<taskSize; ++i) pendingTask.push_back((int) 2);
 
 
 
@@ -103,7 +108,7 @@ int main(int argc, char *argv[]) {
       MPI_Recv(buffer, 2, MPI_INT, 0,
               0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
       if(buffer[0] == NO_MORE) {
-        std::cout << "worker " << proc_id << " finished job" << std::endl;
+        std::cout << "worker " << processor_name << ", " << proc_id << " finished job" << std::endl;
         break;
       }
 
@@ -111,18 +116,20 @@ int main(int argc, char *argv[]) {
       // DO THINGS //
       std::cout << "\tworker " << proc_id << " waits " << buffer[1] << " secs"<< std::endl;
       std::cout << std::flush;
-      usleep(buffer[1]*500000);
+      buffer[1] = 1;
+      for(int i=0; i<22000; ++i) for(int j=0; j<10000; ++j)
+        buffer[1] += 3*i - j;
       //
 
       buffer[0] = TASK_DONE;
-      buffer[1] = 1;
+      //buffer[1] = 1;
       MPI_Send(buffer, 2, MPI_INT, 0,
               0, MPI_COMM_WORLD);
 
     }
   }
 
-  std::cout << "proc " << proc_id << " exits" << std::endl;
+  std::cout << "proc " << proc_id << " of " << processor_name << " exits" << std::endl;
 
 
   MPI_Finalize();
