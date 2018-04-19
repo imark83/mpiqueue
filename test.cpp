@@ -57,7 +57,7 @@ int main(int argc, char *argv[]) {
   std::cout << proc_id << "/" << world_size << std::endl;
 
   if (proc_id == 0) {
-    int taskSize = 5000;
+    int taskSize = 100;
     int activeWorkers = world_size-1;
     Task pendingTask(taskSize), completedTask(taskSize);
     for(size_t i=0; i<taskSize; ++i) pendingTask.push_back((int) 2);
@@ -75,23 +75,23 @@ int main(int argc, char *argv[]) {
                 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
           switch (buffer[0]) {
             case TASK_DONE:
-              std::cout << "worker " << worker << " has DONE A TASK" << std::endl;
+              std::cout << "\t\tworker " << worker << " has DONE A TASK" << std::endl;
               completedTask.push_back(buffer[1]);
-              std::cout << "completed = " << completedTask.size() << std::endl;
-              std::cout << "criterio = " << (!completedTask.completed()) << std::endl;
+              std::cout << "\t\tcompleted = " << completedTask.size() << std::endl;
+              std::cout << "\t\tcriterio = " << (!completedTask.completed()) << std::endl;
               break;
             case GIVE_ME:
-              std::cout << "worker " << worker << " asks for TASK" << std::endl;
+              std::cout << "\t\tworker " << worker << " asks for TASK" << std::endl;
               if(!pendingTask.empty()){
-                std::cout << "so send task to woker " << worker << std::endl;
+                std::cout << "\t\tso send task to woker " << worker << std::endl;
                 buffer[0] = TASK_DONE;
                 buffer[1] = pendingTask.front();
                 pendingTask.pop_front();
               } else {
-                std::cout << "but no more tasks left for worker " << worker << std::endl;
+                std::cout << "\t\tbut no more tasks left for worker " << worker << std::endl;
                 buffer[0] = NO_MORE;
                 --activeWorkers;
-                std::cout << "still active = " << activeWorkers << std::endl;
+                std::cout << "\t\t\t\tstill active = " << activeWorkers << std::endl;
               }
               MPI_Send(buffer, 2, MPI_INT, worker,
                       0, MPI_COMM_WORLD);
@@ -108,16 +108,16 @@ int main(int argc, char *argv[]) {
       MPI_Recv(buffer, 2, MPI_INT, 0,
               0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
       if(buffer[0] == NO_MORE) {
-        std::cout << "worker " << processor_name << ", " << proc_id << " finished job" << std::endl;
+        std::cout << "\t\t\t\t\t\tworker " << processor_name << ", " << proc_id << " finished job" << std::endl;
         break;
       }
 
 
       // DO THINGS //
-      std::cout << "\tworker " << proc_id << " waits " << buffer[1] << " secs"<< std::endl;
+      std::cout << "\t\t\t\t\t\tworker " << processor_name << "-"<< proc_id << " does " << " task " << buffer[1] << std::endl;
       std::cout << std::flush;
       buffer[1] = 1;
-      for(int i=0; i<22000; ++i) for(int j=0; j<10000; ++j)
+      for(int i=0; i<10000; ++i) for(int j=0; j<10000; ++j)
         buffer[1] += 3*i - j;
       //
 
@@ -129,7 +129,7 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  std::cout << "proc " << proc_id << " of " << processor_name << " exits" << std::endl;
+  std::cout << "\t\t\t\tproc " << proc_id << " of " << processor_name << " exits" << std::endl;
 
 
   MPI_Finalize();
