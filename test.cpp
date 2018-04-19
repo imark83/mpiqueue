@@ -2,43 +2,18 @@
 #include <mpi.h>
 #include <unistd.h>
 #include <deque>
+#include <complex>
+#include <string.h>
 
-enum header {TASK_DONE, GIVE_ME, NO_MORE};
+typedef std::complex<double> Complex;
+enum header {TASK_DONE, GIVE_ME, NO_MORE, GIVE_YOU};
 
-class Task {
-private:
-  int n;
-  std::deque<int> data;
 
-public:
-  Task (int n) : n(n) {}
-  virtual ~Task () {}
+inline int min(int a, int b) {
+  if(a<b) return a;
+  return b;
+}
 
-  int & operator()(size_t i) {
-    return data[i];
-  }
-  void push_back(int x) {
-    data.push_back(x);
-    return;
-  }
-  int front() const {
-    return data.front();
-  }
-  void pop_front() {
-    data.pop_front();
-    return;
-  }
-  size_t size() const {
-    return data.size();
-  }
-
-  int completed () const {
-    return data.size() == n;
-  }
-  int empty () const {
-    return data.size() == 0;
-  }
-};
 
 int main(int argc, char *argv[]) {
   int proc_id, world_size;
@@ -53,47 +28,75 @@ int main(int argc, char *argv[]) {
   MPI_Get_processor_name(processor_name, &name_len);
 
 
+  Complex z0(-3,-3), z1(3,3);
+  const size_t max_chunkSize = 3;
+  int taskSize = 7;
+
+  // COMMUNICATION BUFFER. MAX SIZE = max_chunkSize + 3
+  // header
+  // index
+  // chunkSize
+  // data
+  int *buffer = new int[max_chunkSize+3];
+
+  // STATUS STRUCT FOR COMMUNICATION
+  MPI_Status status;
+  // message length
+  int msgLen;
+
+
+  // ROP
+  int *rop;
 
   std::cout << proc_id << "/" << world_size << std::endl;
 
   if (proc_id == 0) {
-    int taskSize = 100;
     int activeWorkers = world_size-1;
-    Task pendingTask(taskSize), completedTask(taskSize);
-    for(size_t i=0; i<taskSize; ++i) pendingTask.push_back((int) 2);
+    int pendingTask = taskSize;
+    int completedTask = 0;
+    rop = new int[taskSize];
+
+    // Task pendingTask(taskSize), completedTask(taskSize);
 
 
-
-    while(!completedTask.completed() || activeWorkers) {
+    while(!completedTask || activeWorkers) {
       for(int worker=1; worker < world_size; ++worker) {
         MPI_Iprobe(worker, 0, MPI_COMM_WORLD, &incomingMessage,
-                MPI_STATUS_IGNORE);
+                &status);
         if(incomingMessage) {
+          // get length
+          MPI_Get_count(&status, MPI_INT, &msgLen);
           std::cout << "incoming Message from worker " << worker << std::endl;
-          int buffer[2];
-          MPI_Recv(buffer, 2, MPI_INT, worker,
+          MPI_Recv(buffer, msgLen, MPI_INT, worker,
                 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
           switch (buffer[0]) {
             case TASK_DONE:
-              std::cout << "\t\tworker " << worker << " has DONE A TASK" << std::endl;
-              completedTask.push_back(buffer[1]);
-              std::cout << "\t\tcompleted = " << completedTask.size() << std::endl;
-              std::cout << "\t\tcriterio = " << (!completedTask.completed()) << std::endl;
+              std::cout << "\t\tworker " << worker << " has DONE A TASK of len " << msgLen << std::endl;
+
+              // UPLOAD DATA
+              memcpy(rop+buffer[1], buffer+3, sizeof(int) * buffer[2]);
+              completedTask += buffer[2];
+              // END UPLOAD
+
+              std::cout << "\t\tcompleted = " << completedTask << std::endl;
+              std::cout << "\t\tcriterio = " << (completedTask != taskSize)
+                      << std::endl;
               break;
             case GIVE_ME:
               std::cout << "\t\tworker " << worker << " asks for TASK" << std::endl;
-              if(!pendingTask.empty()){
+              if(pendingTask){
                 std::cout << "\t\tso send task to woker " << worker << std::endl;
-                buffer[0] = TASK_DONE;
-                buffer[1] = pendingTask.front();
-                pendingTask.pop_front();
+                buffer[0] = GIVE_YOU;
+                buffer[1] = taskSize-pendingTask;
+                buffer[2] = min(max_chunkSize, pendingTask);
+                pendingTask -= buffer[2];
               } else {
                 std::cout << "\t\tbut no more tasks left for worker " << worker << std::endl;
                 buffer[0] = NO_MORE;
                 --activeWorkers;
                 std::cout << "\t\t\t\tstill active = " << activeWorkers << std::endl;
               }
-              MPI_Send(buffer, 2, MPI_INT, worker,
+              MPI_Send(buffer, 3, MPI_INT, worker,
                       0, MPI_COMM_WORLD);
           }
         }
@@ -101,11 +104,10 @@ int main(int argc, char *argv[]) {
     }
   } else {
     while(1) {
-      int buffer[2];
       buffer[0] = GIVE_ME;
-      MPI_Send(buffer, 2, MPI_INT, 0,
+      MPI_Send(buffer, 1, MPI_INT, 0,
               0, MPI_COMM_WORLD);
-      MPI_Recv(buffer, 2, MPI_INT, 0,
+      MPI_Recv(buffer, 3, MPI_INT, 0,
               0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
       if(buffer[0] == NO_MORE) {
         std::cout << "\t\t\t\t\t\tworker " << processor_name << ", " << proc_id << " finished job" << std::endl;
@@ -114,22 +116,25 @@ int main(int argc, char *argv[]) {
 
 
       // DO THINGS //
-      std::cout << "\t\t\t\t\t\tworker " << processor_name << "-"<< proc_id << " does " << " task " << buffer[1] << std::endl;
+      std::cout << "\t\t\t\t\tworker " << processor_name << "-"<< proc_id << " does " << " task " << buffer[1] << " of len " << buffer[2] << std::endl;
       std::cout << std::flush;
-      buffer[1] = 1;
-      for(int i=0; i<10000; ++i) for(int j=0; j<10000; ++j)
-        buffer[1] += 3*i - j;
-      //
+
+      for(int i=0; i<buffer[2]; ++i)
+        buffer[3+i] = (buffer[1]+i) * (buffer[1]+i);
 
       buffer[0] = TASK_DONE;
       //buffer[1] = 1;
-      MPI_Send(buffer, 2, MPI_INT, 0,
+      MPI_Send(buffer, buffer[2]+3, MPI_INT, 0,
               0, MPI_COMM_WORLD);
 
     }
   }
 
-  std::cout << "\t\t\t\tproc " << proc_id << " of " << processor_name << " exits" << std::endl;
+  if(proc_id == 0) {
+    FILE *fout = fopen("newton.bin", "wb");
+    fwrite(rop, sizeof(int), taskSize, fout);
+    fclose(fout);
+  }
 
 
   MPI_Finalize();
