@@ -1,6 +1,7 @@
 #include <iostream>
 #include <mpi.h>
 #include <unistd.h>
+#include <cstdlib>
 #include <string.h>
 #include <vector>
 
@@ -11,7 +12,7 @@ enum _header {TASK_DONE, GIVE_ME, NO_MORE, GIVE_YOU};
 
 
 const double par[] = {2.0, 3.0};
-int N = 11;
+int N = 1001;
 int nvar=27;
 
 
@@ -43,6 +44,8 @@ ostream & operator<<(ostream &output, const struct _Task &op) {
 }
 
 int main(int argc, char *argv[]) {
+
+
   int proc_id, world_size;
   // MPI_Status status;
   int incomingMessage;
@@ -58,6 +61,7 @@ int main(int argc, char *argv[]) {
 
   // COMMUNICATION BUFFER.
   Task buffer;
+  vector<Task> rop(0);
 
   // STATUS STRUCT FOR COMMUNICATION
   MPI_Status status;
@@ -70,7 +74,7 @@ int main(int argc, char *argv[]) {
     int taskSize = N;
     int pendingTask = N;
     int completedTask = 0;
-    vector<Task> rop(N);
+    rop.resize(N);
 
     // INITIALIZE TASK INPUT
     for(int i=0; i<N; ++i) {
@@ -104,6 +108,7 @@ int main(int argc, char *argv[]) {
               cout << "\t\tcompleted = " << completedTask << endl;
               cout << "\t\tcriterio = " << (completedTask != taskSize)
                       << endl;
+              ++completedTask;
               break;
             case GIVE_ME:
               cout << "\t\tworker " << worker << " asks for TASK" << endl;
@@ -126,11 +131,6 @@ int main(int argc, char *argv[]) {
         }
       }
     }
-
-    // SAVE DATA
-    // for(int i=0; i<N; ++i)
-    //   cout << rop[i] << endl;
-
   } else {
     while(1) {
       buffer.header = GIVE_ME;
@@ -157,6 +157,12 @@ int main(int argc, char *argv[]) {
               0, MPI_COMM_WORLD);
 
     }
+  }
+
+  usleep(1000);
+  if(proc_id == 0) {
+    for(int i=0; i<N; ++i)
+      cout << rop[i] << endl;
   }
 
   MPI_Finalize();
