@@ -1,12 +1,19 @@
 #include <iostream>
 #include <mpi.h>
 #include <unistd.h>
-#include <deque>
-#include <complex>
 #include <string.h>
+#include <vector>
 
-typedef std::complex<double> Complex;
-enum header {TASK_DONE, GIVE_ME, NO_MORE, GIVE_YOU};
+using namespace std;
+
+
+enum _header {TASK_DONE, GIVE_ME, NO_MORE, GIVE_YOU};
+
+
+const double par[] = {2.0, 3.0};
+int N = 11;
+int nvar=27;
+
 
 
 inline int min(int a, int b) {
@@ -14,6 +21,26 @@ inline int min(int a, int b) {
   return b;
 }
 
+
+typedef struct _Task {
+  int header;           // COMMUNICATION PROTOCOL
+  int index;
+  double par;           // INPUT
+  double x0[27];        // INPUT
+
+  double xf[27];        // OUTPUT
+  int latidos;
+  int picos;
+} Task;
+
+
+
+
+ostream & operator<<(ostream &output, const struct _Task &op) {
+  output << "(" << op.latidos << ", " << op.picos << ") " << op.xf[0] << " " << op.xf[nvar-1] << " <---> par = " << op.par;
+
+  return output;
+}
 
 int main(int argc, char *argv[]) {
   int proc_id, world_size;
@@ -28,33 +55,32 @@ int main(int argc, char *argv[]) {
   MPI_Get_processor_name(processor_name, &name_len);
 
 
-  Complex z0(-3,-3), z1(3,3);
-  const size_t max_chunkSize = 3;
-  int taskSize = 7;
 
-  // COMMUNICATION BUFFER. MAX SIZE = max_chunkSize + 3
-  // header
-  // index
-  // chunkSize
-  // data
-  int *buffer = new int[max_chunkSize+3];
+  // COMMUNICATION BUFFER.
+  Task buffer;
 
   // STATUS STRUCT FOR COMMUNICATION
   MPI_Status status;
-  // message length
-  int msgLen;
 
 
-  // ROP
-  int *rop;
-
-  std::cout << proc_id << "/" << world_size << std::endl;
+  cout << proc_id << "/" << world_size << endl;
 
   if (proc_id == 0) {
     int activeWorkers = world_size-1;
-    int pendingTask = taskSize;
+    int taskSize = N;
+    int pendingTask = N;
     int completedTask = 0;
-    rop = new int[taskSize];
+    vector<Task> rop(N);
+
+    // INITIALIZE TASK INPUT
+    for(int i=0; i<N; ++i) {
+      rop[i].index = i;
+      rop[i].par = par[0] + i*((par[1]-par[0])/(N-1.0));
+      for(int j=0; j<nvar; ++j)
+        rop[i].x0[j] = rop[i].xf[j] = -1.0;
+      rop[i].latidos = -1;
+      rop[i].picos = -1;
+    }
 
     // Task pendingTask(taskSize), completedTask(taskSize);
 
@@ -65,77 +91,73 @@ int main(int argc, char *argv[]) {
                 &status);
         if(incomingMessage) {
           // get length
-          MPI_Get_count(&status, MPI_INT, &msgLen);
-          std::cout << "incoming Message from worker " << worker << std::endl;
-          MPI_Recv(buffer, msgLen, MPI_INT, worker,
+          cout << "incoming Message from worker " << worker << endl;
+          MPI_Recv(&buffer, sizeof(Task), MPI_CHAR, worker,
                 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-          switch (buffer[0]) {
+          switch (buffer.header) {
             case TASK_DONE:
-              std::cout << "\t\tworker " << worker << " has DONE A TASK of len " << msgLen << std::endl;
+              cout << "\t\tworker " << worker << " has DONE A TASK" << endl;
 
               // UPLOAD DATA
-              memcpy(rop+buffer[1], buffer+3, sizeof(int) * buffer[2]);
-              completedTask += buffer[2];
+              rop[buffer.index] = buffer;
               // END UPLOAD
-
-              std::cout << "\t\tcompleted = " << completedTask << std::endl;
-              std::cout << "\t\tcriterio = " << (completedTask != taskSize)
-                      << std::endl;
+              cout << "\t\tcompleted = " << completedTask << endl;
+              cout << "\t\tcriterio = " << (completedTask != taskSize)
+                      << endl;
               break;
             case GIVE_ME:
-              std::cout << "\t\tworker " << worker << " asks for TASK" << std::endl;
+              cout << "\t\tworker " << worker << " asks for TASK" << endl;
               if(pendingTask){
-                std::cout << "\t\tso send task to woker " << worker << std::endl;
-                buffer[0] = GIVE_YOU;
-                buffer[1] = taskSize-pendingTask;
-                buffer[2] = min(max_chunkSize, pendingTask);
-                pendingTask -= buffer[2];
+                cout << "\t\tso send task to woker " << worker << endl;
+                int index = taskSize-pendingTask;
+                buffer = rop[index];
+                buffer.header = GIVE_YOU;
+                pendingTask -= 1;
+
               } else {
-                std::cout << "\t\tbut no more tasks left for worker " << worker << std::endl;
-                buffer[0] = NO_MORE;
+                cout << "\t\tbut no more tasks left for worker " << worker << endl;
+                buffer.header = NO_MORE;
                 --activeWorkers;
-                std::cout << "\t\t\t\tstill active = " << activeWorkers << std::endl;
+                cout << "\t\t\t\tstill active = " << activeWorkers << endl;
               }
-              MPI_Send(buffer, 3, MPI_INT, worker,
+              MPI_Send(&buffer, sizeof(Task), MPI_CHAR, worker,
                       0, MPI_COMM_WORLD);
           }
         }
       }
     }
+
+    // SAVE DATA
+    // for(int i=0; i<N; ++i)
+    //   cout << rop[i] << endl;
+
   } else {
     while(1) {
-      buffer[0] = GIVE_ME;
-      MPI_Send(buffer, 1, MPI_INT, 0,
+      buffer.header = GIVE_ME;
+      MPI_Send(&buffer, sizeof(Task), MPI_CHAR, 0,
               0, MPI_COMM_WORLD);
-      MPI_Recv(buffer, 3, MPI_INT, 0,
+      MPI_Recv(&buffer, sizeof(Task), MPI_CHAR, 0,
               0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-      if(buffer[0] == NO_MORE) {
-        std::cout << "\t\t\t\t\t\tworker " << processor_name << ", " << proc_id << " finished job" << std::endl;
+      if(buffer.header == NO_MORE) {
+        cout << "\t\t\t\t\t\tworker " << processor_name << ", " << proc_id << " finished job" << endl;
         break;
       }
 
-
       // DO THINGS //
-      std::cout << "\t\t\t\t\tworker " << processor_name << "-"<< proc_id << " does " << " task " << buffer[1] << " of len " << buffer[2] << std::endl;
-      std::cout << std::flush;
+      // LLAMAR AL INTEGRADOR
+      for(int j=0; j<nvar; ++j)
+        buffer.xf[j] = buffer.par;
+      buffer.latidos = 2;
+      buffer.picos = 30000 + buffer.index;
 
-      for(int i=0; i<buffer[2]; ++i)
-        buffer[3+i] = (buffer[1]+i) * (buffer[1]+i);
 
-      buffer[0] = TASK_DONE;
+      buffer.header = TASK_DONE;
       //buffer[1] = 1;
-      MPI_Send(buffer, buffer[2]+3, MPI_INT, 0,
+      MPI_Send(&buffer, sizeof(Task), MPI_CHAR, 0,
               0, MPI_COMM_WORLD);
 
     }
   }
-
-  if(proc_id == 0) {
-    FILE *fout = fopen("newton.bin", "wb");
-    fwrite(rop, sizeof(int), taskSize, fout);
-    fclose(fout);
-  }
-
 
   MPI_Finalize();
   return 0;
